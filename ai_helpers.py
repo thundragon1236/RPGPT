@@ -4,8 +4,41 @@ from config import OR_API_KEY, OR_MODEL, OR_ENDPOINT
 from xp_utils import ALL_STATS
 
 def openrouter_chat(messages, temperature=0.3):
-    # … your existing code unchanged …
-    pass
+    if not OR_API_KEY or not OR_MODEL:
+        raise ValueError("OpenRouter API key/model not configured.")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OR_API_KEY}"
+    }
+    payload = {
+        "model": OR_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": False,
+        "response_format": {"type": "json_object"}
+    }
+    try:
+        r = requests.post(OR_ENDPOINT, headers=headers, json=payload, timeout=90)
+        r.raise_for_status()
+        resp = r.json()
+        content = resp["choices"][0]["message"]["content"]
+        # Try parsing JSON out of the content string
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            logging.warning("Couldn't parse AI response as JSON, returning raw string.")
+            return content
+    except Exception as e:
+        logging.error(f"Error calling AI service: {e}")
+        raise
+
+def strip_markdown_fences(s):
+    # Remove markdown code fences if present
+    if isinstance(s, str):
+        return re.sub(r'^```(?:json)?\n?(.*?)```$', r'\1', s, flags=re.DOTALL)
+    return s
+
+# ... rest of code unchanged ...
 
 def split_activities(daily_log: str):
     # Split on commas, semicolons, or the word "and"
@@ -56,9 +89,16 @@ Rules:
 
     # 3) Parse out stat_xp
     # raw may be dict or JSON string
+    if raw is None:
+        logging.warning("No AI response, returning empty suggestions.")
+        return []
     if isinstance(raw, str):
-        cleaned = re.sub(r'^```(?:json)?\n?(.*?)```$', r'\1', raw, flags=re.DOTALL)
-        data = json.loads(cleaned)
+        cleaned = strip_markdown_fences(raw)
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            logging.warning("Couldn't parse AI response as JSON, returning empty suggestions.")
+            return []
     else:
         data = raw
     llm_sugs = data.get("suggestions", [])
@@ -67,8 +107,11 @@ Rules:
     final = []
     for b in base:
         # find matching LLM suggestion
-        match = next((x for x in llm_sugs if x["activity"] == b["activity"]), {})
+        match = next((x for x in llm_sugs if x.get("activity") == b["activity"]), {})
         stats = match.get("stat_xp", {})
+        if not isinstance(stats, dict):
+            logging.warning("Malformed AI response, skipping activity.")
+            continue
         skxp = sum(stats.values()) if b["skill"] else 0
         final.append({
             "activity": b["activity"],

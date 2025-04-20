@@ -53,7 +53,9 @@ def route_save():
     data         = request.json
     char_id      = data["character_id"]
     log_text     = data.get("daily_log", "")
-    suggestions  = data["suggestions"]
+    suggestions  = data.get("suggestions")
+    if suggestions is None:
+        return jsonify({"error": "Missing 'suggestions' in request body"}), 400
 
     # 1) Append the raw log
     append_log(char_id, {"date": str(date.today()), "entry": log_text})
