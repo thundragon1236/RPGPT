@@ -1,0 +1,15 @@
+{
+  "id": "tester",
+  "stats": {
+    "vitality": {
+      "xp": 130,
+      "level": 1
+    }
+  },
+  "skills": {
+    "running": {
+      "xp": 130,
+      "level": 1
+    }
+  }
+}

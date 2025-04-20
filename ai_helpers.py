@@ -4,6 +4,7 @@ from config import OR_API_KEY, OR_MODEL, OR_ENDPOINT
 from xp_utils import ALL_STATS
 
 def openrouter_chat(messages, temperature=0.3):
+    print(f"[DEBUG ai_helpers] OR_API_KEY={OR_API_KEY!r}, OR_MODEL={OR_MODEL!r}, OR_ENDPOINT={OR_ENDPOINT!r}")
     # 1) Basic config check
     if not OR_API_KEY or not OR_MODEL:
         raise ValueError("OpenRouter API key or model not configured.")
