@@ -4,8 +4,9 @@ from config import OR_API_KEY, OR_MODEL, OR_ENDPOINT
 from xp_utils import ALL_STATS
 
 def openrouter_chat(messages, temperature=0.3):
+    # 1) Basic config check
     if not OR_API_KEY or not OR_MODEL:
-        raise ValueError("OpenRouter API key/model not set.")
+        raise ValueError("OpenRouter API key or model not configured.")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {OR_API_KEY}"
@@ -16,17 +17,36 @@ def openrouter_chat(messages, temperature=0.3):
         "temperature": temperature,
         "stream": False
     }
-    r = requests.post(OR_ENDPOINT, headers=headers, json=payload, timeout=90)
-    if not r.ok:
-        logging.error(f"OpenRouter error {r.status_code}: {r.text}")
-        r.raise_for_status()
 
-    resp = r.json()  # now this works because we hit /chat/completions
-    # extract the assistant content
-    content = resp["choices"][0]["message"]["content"]
-    # If the model wrapped your JSON in markdown fences, strip them
-    clean = re.sub(r'^```(?:json)?\n(.*?)```$', r'\1', content, flags=re.DOTALL).strip()
-    return json.loads(clean)
+    # 2) Call the correct endpoint
+    r = requests.post(OR_ENDPOINT, headers=headers, json=payload, timeout=90)
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        logging.error(f"OpenRouter HTTP {r.status_code}: {r.text}")
+        raise
+
+    # 3) Parse the outer JSON
+    try:
+        response_json = r.json()
+    except ValueError:
+        logging.error(f"OpenRouter returned non‑JSON response:\n{r.text}")
+        raise ValueError("OpenRouter response was not JSON")
+
+    # 4) Extract the assistant’s content field
+    try:
+        content = response_json["choices"][0]["message"]["content"]
+    except (KeyError, IndexError):
+        logging.error(f"Missing choices in OpenRouter response: {response_json}")
+        raise ValueError("OpenRouter JSON missing choices/message/content")
+
+    # 5) Strip markdown fences and parse the inner JSON
+    cleaned = re.sub(r'^```(?:json)?\n?(.*?)```$', r'\1', content.strip(), flags=re.DOTALL)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        logging.error(f"Failed parsing inner JSON from content:\n{content}")
+        raise ValueError("Failed to parse JSON from OpenRouter content")
 
 def strip_markdown_fences(s):
     # Remove markdown code fences if present
@@ -78,18 +98,12 @@ Rules:
 """
     user = json.dumps({"activities": acts}, ensure_ascii=False)
 
-    raw = openrouter_chat([
+    data = openrouter_chat([
         {"role":"system", "content": system},
         {"role":"user",   "content": user}
     ])
-
-    # 3) Parse out stat_xp
-    # raw should be dict with choices[0].message.content
-    try:
-        resp_content = raw["choices"][0]["message"]["content"]
-        data = json.loads(resp_content)
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        logging.error(f"Malformed AI response: {raw}\nError: {e}")
+    if not isinstance(data, dict):
+        logging.error(f"Malformed AI response: {data}")
         return []
     llm_sugs = data.get("suggestions", [])
 

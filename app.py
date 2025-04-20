@@ -1,10 +1,11 @@
 # app.py
 import os, json
 from datetime import date
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from ai_helpers import suggest_xp, match_skill  # import if needed
 from xp_utils import add_xp_to_bucket
 from config import DATA_DIR  # define DATA_DIR = "data" in config
+import logging
 
 # ─ Setup ─────────────────────────────────
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -16,10 +17,17 @@ def paths_for(char_id):
     return os.path.join(d, "logs.json"), os.path.join(d, "stats.json")
 
 def load_character(char_id):
+    # Load character stats from stats.json under DATA_DIR/char_id
     _, stats_p = paths_for(char_id)
-    if os.path.exists(stats_p):
-        return json.load(open(stats_p))
-    return {"stats": {}, "skills": {}}
+    if not os.path.exists(stats_p):
+        return {"id": char_id, "stats": {}, "skills": {}}
+    try:
+        with open(stats_p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logging.error(f"Malformed character file: {stats_p}")
+        os.rename(stats_p, stats_p + ".bad")
+        abort(500, description=f"Malformed character file: {stats_p}")
 
 def save_character(char_id, character):
     _, stats_p = paths_for(char_id)
@@ -28,9 +36,18 @@ def save_character(char_id, character):
 
 def append_log(char_id, entry):
     logs_p, _ = paths_for(char_id)
-    logs = json.load(open(logs_p)) if os.path.exists(logs_p) else []
+    try:
+        if os.path.exists(logs_p):
+            with open(logs_p, "r", encoding="utf-8") as f:
+                logs = json.load(f)
+        else:
+            logs = []
+    except json.JSONDecodeError:
+        logging.error(f"Malformed log file: {logs_p}")
+        os.rename(logs_p, logs_p + ".bad")
+        abort(500, description=f"Malformed log file: {logs_p}")
     logs.append(entry)
-    with open(logs_p, "w") as f:
+    with open(logs_p, "w", encoding="utf-8") as f:
         json.dump(logs, f, indent=2)
 
 # ─ Endpoints ─────────────────────────────────
@@ -41,21 +58,25 @@ def index():
 
 @app.route("/suggest_xp", methods=["POST"])
 def route_suggest():
-    data         = request.json
-    log_text     = data["daily_log"]
-    char_id      = data.get("character_id", "default")
-    character    = load_character(char_id)
-    suggestions  = suggest_xp(log_text, character)
+    data = request.get_json(force=True)
+    log_text = data.get("daily_log")
+    character = data.get("character")
+    if not log_text or not character:
+        return jsonify({"error": "Missing required field(s): daily_log and character are required."}), 400
+    try:
+        suggestions = suggest_xp(log_text, character)
+    except Exception as e:
+        return jsonify({"error": "AI error", "details": str(e)}), 502
     return jsonify({"suggestions": suggestions})
 
 @app.route("/save_progress", methods=["POST"])
 def route_save():
-    data         = request.json
-    char_id      = data["character_id"]
-    log_text     = data.get("daily_log", "")
-    suggestions  = data.get("suggestions")
-    if suggestions is None:
-        return jsonify({"error": "Missing 'suggestions' in request body"}), 400
+    data = request.get_json(force=True)
+    char_id = data.get("character_id")
+    log_text = data.get("daily_log")
+    suggestions = data.get("suggestions")
+    if not char_id or not log_text or suggestions is None:
+        return jsonify({"error": "Missing required field(s): character_id, daily_log, suggestions"}), 400
 
     # 1) Append the raw log
     append_log(char_id, {"date": str(date.today()), "entry": log_text})
@@ -73,13 +94,17 @@ def route_save():
 
 @app.route("/list_skills", methods=["GET"])
 def route_list_skills():
-    char_id = request.args["character_id"]
+    char_id = request.args.get("character_id")
+    if not char_id:
+        return jsonify({"error": "Missing required query parameter: character_id"}), 400
     char    = load_character(char_id)
     return jsonify({"skills": char.get("skills", {})})
 
 @app.route("/get_stats", methods=["GET"])
 def route_get_stats():
-    char_id = request.args["character_id"]
+    char_id = request.args.get("character_id")
+    if not char_id:
+        return jsonify({"error": "Missing required query parameter: character_id"}), 400
     char    = load_character(char_id)
     return jsonify({"stats": char.get("stats", {})})
 

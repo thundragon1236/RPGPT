@@ -1,6 +1,6 @@
 # xp_utils.py
 
-# ── New doubling thresholds per your spec:
+# ── Canonical XP thresholds for skill tiers (used by both backend and frontend)
 SKILL_TIER_THRESHOLDS = [
     (0,   "F"),  # always
     (5,   "E"),  # after 5 levels (i.e. 500 XP)
