@@ -5,7 +5,7 @@ from xp_utils import ALL_STATS
 
 def openrouter_chat(messages, temperature=0.3):
     if not OR_API_KEY or not OR_MODEL:
-        raise ValueError("Missing OpenRouter API key/model.")
+        raise ValueError("OpenRouter API key/model not set.")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {OR_API_KEY}"
@@ -20,17 +20,13 @@ def openrouter_chat(messages, temperature=0.3):
     if not r.ok:
         logging.error(f"OpenRouter error {r.status_code}: {r.text}")
         r.raise_for_status()
-    text = r.text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Try to extract JSON from markdown code fences if present
-        cleaned = re.sub(r'^```(?:json)?\n?(.*?)```$', r'\1', text, flags=re.DOTALL).strip()
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            logging.error(f"Failed to extract JSON from AI response:\n{text}")
-            raise ValueError("OpenRouter returned non‑JSON response.")
+
+    resp = r.json()  # now this works because we hit /chat/completions
+    # extract the assistant content
+    content = resp["choices"][0]["message"]["content"]
+    # If the model wrapped your JSON in markdown fences, strip them
+    clean = re.sub(r'^```(?:json)?\n(.*?)```$', r'\1', content, flags=re.DOTALL).strip()
+    return json.loads(clean)
 
 def strip_markdown_fences(s):
     # Remove markdown code fences if present
