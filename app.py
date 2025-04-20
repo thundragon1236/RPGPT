@@ -35,6 +35,10 @@ def append_log(char_id, entry):
 
 # ─ Endpoints ─────────────────────────────────
 
+@app.route("/")
+def index():
+    return jsonify({"message": "LifeQuest GPT Backend is running."})
+
 @app.route("/suggest_xp", methods=["POST"])
 def route_suggest():
     data         = request.json
