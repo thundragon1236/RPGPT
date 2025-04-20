@@ -5,7 +5,7 @@ from xp_utils import ALL_STATS
 
 def openrouter_chat(messages, temperature=0.3):
     if not OR_API_KEY or not OR_MODEL:
-        raise ValueError("OpenRouter API key/model not configured.")
+        raise ValueError("Missing OpenRouter API key/model.")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {OR_API_KEY}"
@@ -14,23 +14,23 @@ def openrouter_chat(messages, temperature=0.3):
         "model": OR_MODEL,
         "messages": messages,
         "temperature": temperature,
-        "stream": False,
-        "response_format": {"type": "json_object"}
+        "stream": False
     }
-    try:
-        r = requests.post(OR_ENDPOINT, headers=headers, json=payload, timeout=90)
+    r = requests.post(OR_ENDPOINT, headers=headers, json=payload, timeout=90)
+    if not r.ok:
+        logging.error(f"OpenRouter error {r.status_code}: {r.text}")
         r.raise_for_status()
-        resp = r.json()
-        content = resp["choices"][0]["message"]["content"]
-        # Try parsing JSON out of the content string
+    text = r.text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Try to extract JSON from markdown code fences if present
+        cleaned = re.sub(r'^```(?:json)?\n?(.*?)```$', r'\1', text, flags=re.DOTALL).strip()
         try:
-            return json.loads(content)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
-            logging.warning("Couldn't parse AI response as JSON, returning raw string.")
-            return content
-    except Exception as e:
-        logging.error(f"Error calling AI service: {e}")
-        raise
+            logging.error(f"Failed to extract JSON from AI response:\n{text}")
+            raise ValueError("OpenRouter returned non‑JSON response.")
 
 def strip_markdown_fences(s):
     # Remove markdown code fences if present
@@ -88,19 +88,13 @@ Rules:
     ])
 
     # 3) Parse out stat_xp
-    # raw may be dict or JSON string
-    if raw is None:
-        logging.warning("No AI response, returning empty suggestions.")
+    # raw should be dict with choices[0].message.content
+    try:
+        resp_content = raw["choices"][0]["message"]["content"]
+        data = json.loads(resp_content)
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        logging.error(f"Malformed AI response: {raw}\nError: {e}")
         return []
-    if isinstance(raw, str):
-        cleaned = strip_markdown_fences(raw)
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            logging.warning("Couldn't parse AI response as JSON, returning empty suggestions.")
-            return []
-    else:
-        data = raw
     llm_sugs = data.get("suggestions", [])
 
     # 4) Merge with base (skills) & compute skill_xp
